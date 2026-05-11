@@ -5,33 +5,34 @@ img_in = "/Users/rma/Documents/lab3/new33.png"
 img_out = "/Users/rma/Documents/lab3/encoded.png"
 text_for_encode = "Holodova"
 
-# Читаем ключи (координаты) из текстового файла
-coords = []  # список для хранения пар (x, y)
+# Загрузка координат
+coords = [] # список для хранения пар (x, y)
 with open(keys_file) as f:
     for line in f:
-        line = line.strip() 
-        if line:     # если строка не пустая
+        line = line.strip()
+        if line:   # если строка не пустая
             line = line[1:-1]
             x, y = line.split(',')
             coords.append((int(x), int(y)))  # добавляем в список как числа
 
-# Функция декодирования текста из изображения
-def decode(img_path):
-    img = Image.open(img_path)
+# 1.1 Декодирование текста из изображения
+def decode_original(img_path):
+    """Декодирование целым байтом из синего канала (как было раньше)."""
+    img = Image.open(img_path).convert('RGB')
     pixels = img.load()
-    data = bytearray()# байты прочитанного текста
+    data = bytearray()
 
     # Проходим по всем координатам из файла keys33.txt
     for x, y in coords:
-        # Берём значение синего канала (индекс 2: R=0, G=1, B=2)
-        b = pixels[x, y][2]
+        b = pixels[x, y][2]   # синий канал
         data.append(b)
-        if b == 0:           
+        if b == 0:
             break
     return data.decode('utf-8').rstrip('\x00')
 
-# Функция кодирования текста в изображение
-def encode(img_path, text, out_path):
+# Кодирование и декодирование текста в изображение
+def encode_nibbles(img_path, text, out_path):
+    """Кодирование текста методом b3-B (младший ниббл -> первый пиксель, старший -> второй)."""
     img = Image.open(img_path).convert('RGB')
     pixels = img.load()
     data = text.encode('utf-8') + b'\x00'
@@ -39,29 +40,66 @@ def encode(img_path, text, out_path):
     # Вывод информации о первом символе
     first = data[0]
     print(f"Первый символ: '{chr(first)}', байт = {first}, биты = {first:08b}")
+    print(f"  Старший ниббл (b7..b4): {(first >> 4) & 0x0F:04b}")
+    print(f"  Младший ниббл (b3..b0): {first & 0x0F:04b}")
 
-    # Записываем байты в синий канал по очереди
-    for i, (x, y) in enumerate(coords):
-        if i >= len(data): # если закончились байты текста
+    # Кодирование: проходим по каждому байту текста 
+    for i, byte in enumerate(data):
+        if i * 2 + 1 >= len(coords): # На каждые два пикселя (пару) приходится один байт
+            print("Ошибка: недостаточно координат")
             break
-        r, g, b = pixels[x, y]
-        old = b
-        new = data[i]
-        pixels[x, y] = (r, g, new)
 
-        # Вывод изменений для первых двух пикселей
-        if i < 2:
-            print(f"Пиксель {i+1} ({x},{y}): синий {old} -> {new}")
+        low = byte & 0x0F          # младший ниббл (b3..b0)
+        high = (byte >> 4) & 0x0F  # старший ниббл (b7..b4)
+
+        # Первый пиксель пары (записываем младший ниббл)
+        x1, y1 = coords[i * 2]
+        r1, g1, b1 = pixels[x1, y1]
+        # Заменяем только младшие 4 бита синего канала, старшие 4 бита оставляем без изменений
+        new1 = (b1 & 0xF0) | low
+        pixels[x1, y1] = (r1, g1, new1)
+
+        # Второй пиксель пары (записываем старший ниббл)
+        x2, y2 = coords[i * 2 + 1]
+        r2, g2, b2 = pixels[x2, y2]
+        new2 = (b2 & 0xF0) | high
+        pixels[x2, y2] = (r2, g2, new2)
+
+        # Вывод для первых двух пикселей
+        if i == 0:
+            print(f"Пиксель 1 ({x1},{y1}): синий {b1} -> {new1} (записан ниббл {low:04b})")
+            print(f"Пиксель 2 ({x2},{y2}): синий {b2} -> {new2} (записан ниббл {high:04b})")
 
     img.save(out_path)
-    print(f"Сохранено в {out_path}")
+    print(f"Сохранено: {out_path}")
 
-print("Декодирование из new33.png:")
-decoded = decode(img_in)
-print(decoded)
+def decode_nibbles(img_path):
+    """Декодирование."""
+    img = Image.open(img_path).convert('RGB')
+    pixels = img.load()
+    data = bytearray()
+    # Проходим по парам координат
+    for i in range(0, len(coords), 2):
+        if i + 1 >= len(coords):
+            break
+        x1, y1 = coords[i]
+        x2, y2 = coords[i + 1]
+        # Извлекаем младшие 4 бита синего канала из обоих пикселей
+        low = pixels[x1, y1][2] & 0x0F # младший ниббл (был записан первым)
+        high = pixels[x2, y2][2] & 0x0F # старший ниббл (был записан вторым)
+        byte = (high << 4) | low        # Восстанавливаем байт
+        data.append(byte)
+        if byte == 0:
+            break
+    return data.decode('utf-8', errors='replace').rstrip('\x00')
 
-print("\nКодирование текста:", text_for_encode)
-encode(img_in, text_for_encode, img_out)
-print("\nПроверка — декодирование из encoded.png:")
-decoded2 = decode(img_out)
-print(decoded2)
+print("1.1 Декодирование из new33.png")
+decoded_original = decode_original(img_in)
+print(decoded_original)
+
+print(f"\n1.2 Кодирование текста \"{text_for_encode}\"")
+encode_nibbles(img_in, text_for_encode, img_out)
+
+print("\nДекодирование из encoded.png")
+decoded_encoded = decode_nibbles(img_out)
+print(decoded_encoded)
