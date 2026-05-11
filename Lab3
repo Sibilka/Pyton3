@@ -1,0 +1,67 @@
+from PIL import Image
+
+keys_file = "/Users/rma/Documents/lab3/keys33.txt"
+img_in = "/Users/rma/Documents/lab3/new33.png"
+img_out = "/Users/rma/Documents/lab3/encoded.png"
+text_for_encode = "Holodova"
+
+# Читаем ключи (координаты) из текстового файла
+coords = []  # список для хранения пар (x, y)
+with open(keys_file) as f:
+    for line in f:
+        line = line.strip() 
+        if line:     # если строка не пустая
+            line = line[1:-1]
+            x, y = line.split(',')
+            coords.append((int(x), int(y)))  # добавляем в список как числа
+
+# Функция декодирования текста из изображения
+def decode(img_path):
+    img = Image.open(img_path)
+    pixels = img.load()
+    data = bytearray()# байты прочитанного текста
+
+    # Проходим по всем координатам из файла keys33.txt
+    for x, y in coords:
+        # Берём значение синего канала (индекс 2: R=0, G=1, B=2)
+        b = pixels[x, y][2]
+        data.append(b)
+        if b == 0:           
+            break
+    return data.decode('utf-8').rstrip('\x00')
+
+# Функция кодирования текста в изображение
+def encode(img_path, text, out_path):
+    img = Image.open(img_path).convert('RGB')
+    pixels = img.load()
+    data = text.encode('utf-8') + b'\x00'
+
+    # Вывод информации о первом символе
+    first = data[0]
+    print(f"Первый символ: '{chr(first)}', байт = {first}, биты = {first:08b}")
+
+    # Записываем байты в синий канал по очереди
+    for i, (x, y) in enumerate(coords):
+        if i >= len(data): # если закончились байты текста
+            break
+        r, g, b = pixels[x, y]
+        old = b
+        new = data[i]
+        pixels[x, y] = (r, g, new)
+
+        # Вывод изменений для первых двух пикселей
+        if i < 2:
+            print(f"Пиксель {i+1} ({x},{y}): синий {old} -> {new}")
+
+    img.save(out_path)
+    print(f"Сохранено в {out_path}")
+
+print("Декодирование из new33.png:")
+decoded = decode(img_in)
+print(decoded)
+
+print("\nКодирование текста:", text_for_encode)
+encode(img_in, text_for_encode, img_out)
+print("\nПроверка — декодирование из encoded.png:")
+decoded2 = decode(img_out)
+print(decoded2)
