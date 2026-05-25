@@ -1,105 +1,144 @@
+import random
 from PIL import Image
 
 keys_file = "/Users/rma/Documents/lab3/keys33.txt"
 img_in = "/Users/rma/Documents/lab3/new33.png"
 img_out = "/Users/rma/Documents/lab3/encoded.png"
-text_for_encode = "Holodova"
+RANDOM_SEED = 42
 
-# Загрузка координат
-coords = [] # список для хранения пар (x, y)
-with open(keys_file) as f:
-    for line in f:
-        line = line.strip()
-        if line:   # если строка не пустая
-            line = line[1:-1]
-            x, y = line.split(',')
-            coords.append((int(x), int(y)))  # добавляем в список как числа
+TEXT_TO_ENCODE = "Holodova"
 
-# 1.1 Декодирование текста из изображения
-def decode_original(img_path):
-    """Декодирование целым байтом из синего канала (как было раньше)."""
-    img = Image.open(img_path).convert('RGB')
-    pixels = img.load()
-    data = bytearray()
+def decode_original():
+    """Считывает координаты из keys33.txt, извлекает целые байты из синего канала и декодирует в строку."""
+    coords = []  # список пар (x, y)
+    try:
+        with open(keys_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                # Удаляем квадратные скобки в начале и конце строки
+                line = line[1:-1]
+                x, y = line.split(',')
+                coords.append((int(x), int(y)))
+    except Exception as e:
+        print(f"Ошибка чтения {keys_file}: {e}")
+        return ""
 
-    # Проходим по всем координатам из файла keys33.txt
+    try:
+        img = Image.open(img_in).convert('RGB')
+    except Exception as e:
+        print(f"Ошибка открытия {img_in}: {e}")
+        return ""
+
+    pixels = img.load() # доступ к пикселям
+    data = bytearray()  # здесь будем собирать байты сообщения
+
+    # Проходим по всем координатам из файла
     for x, y in coords:
-        b = pixels[x, y][2]   # синий канал
-        data.append(b)
-        if b == 0:
+        b = pixels[x, y][2] # берём синий канал 
+        data.append(b) 
+        if b == 0:  
             break
-    return data.decode('utf-8').rstrip('\x00')
 
-# Кодирование и декодирование текста в изображение
-def encode_nibbles(img_path, text, out_path):
-    """Кодирование текста методом b3-B (младший ниббл -> первый пиксель, старший -> второй)."""
-    img = Image.open(img_path).convert('RGB')
+    return data.decode('utf-8', errors='replace').rstrip('\x00')
+
+def get_random_pixels(img):
+
+    w, h = img.size
+    # Создаём список всех пикселей построчно (слева направо, сверху вниз)
+    all_pixels = [(x, y) for y in range(h) for x in range(w)]
+    # Перемешиваем
+    random.Random(RANDOM_SEED).shuffle(all_pixels)
+    return all_pixels
+
+def encode_nibbles(text):
+    # Открываем исходное изображение
+    try:
+        img = Image.open(img_in).convert('RGB')
+    except Exception as e:
+        print(f"Ошибка открытия {img_in}: {e}")
+        return False
+
     pixels = img.load()
+    # Получаем список случайных координат
+    random_pixels = get_random_pixels(img)
+
     data = text.encode('utf-8') + b'\x00'
 
-    # Вывод информации о первом символе
+    # Для каждого байта нужно 2 пикселя
+    needed = len(data) * 2
+    if needed > len(random_pixels):
+        print("Изображение слишком мало для такого сообщения")
+        return False
+
     first = data[0]
-    print(f"Первый символ: '{chr(first)}', байт = {first}, биты = {first:08b}")
-    print(f"  Старший ниббл (b7..b4): {(first >> 4) & 0x0F:04b}")
-    print(f"  Младший ниббл (b3..b0): {first & 0x0F:04b}")
+    print(f"Первый символ '{chr(first)}' = {first} (двоично: {first:08b})")
+    print(f"  старший ниббл: {(first>>4)&0x0F:04b}, младший ниббл: {first&0x0F:04b}")
 
-    # Кодирование: проходим по каждому байту текста 
-    for i, byte in enumerate(data):
-        if i * 2 + 1 >= len(coords): # На каждые два пикселя (пару) приходится один байт
-            print("Ошибка: недостаточно координат")
-            break
+    for i in range(len(data)):
+        byte = data[i]
+        low = byte & 0x0F          # младшие 4 бита (b3..b0)
+        high = (byte >> 4) & 0x0F  # старшие 4 бита (b7..b4)
 
-        low = byte & 0x0F          # младший ниббл (b3..b0)
-        high = (byte >> 4) & 0x0F  # старший ниббл (b7..b4)
+        # Берём два случайных пикселя для этого байта
+        x1, y1 = random_pixels[i*2]
+        x2, y2 = random_pixels[i*2+1]
 
-        # Первый пиксель пары (записываем младший ниббл)
-        x1, y1 = coords[i * 2]
+        # Первый пиксель (младший ниббл)
         r1, g1, b1 = pixels[x1, y1]
-        # Заменяем только младшие 4 бита синего канала, старшие 4 бита оставляем без изменений
-        new1 = (b1 & 0xF0) | low
-        pixels[x1, y1] = (r1, g1, new1)
+        new_b1 = (b1 & 0xF0) | low   # заменяем младшие 4 бита, старшие сохраняем
+        pixels[x1, y1] = (r1, g1, new_b1)
 
-        # Второй пиксель пары (записываем старший ниббл)
-        x2, y2 = coords[i * 2 + 1]
+        # Второй пиксель (старший ниббл)
         r2, g2, b2 = pixels[x2, y2]
-        new2 = (b2 & 0xF0) | high
-        pixels[x2, y2] = (r2, g2, new2)
+        new_b2 = (b2 & 0xF0) | high
+        pixels[x2, y2] = (r2, g2, new_b2)
 
-        # Вывод для первых двух пикселей
         if i == 0:
-            print(f"Пиксель 1 ({x1},{y1}): синий {b1} -> {new1} (записан ниббл {low:04b})")
-            print(f"Пиксель 2 ({x2},{y2}): синий {b2} -> {new2} (записан ниббл {high:04b})")
+            print(f"\nПиксель1 ({x1},{y1}): синий {b1:3d} ({b1:08b}) -> {new_b1:3d} ({new_b1:08b}) (записан {low:04b})")
+            print(f"Пиксель2 ({x2},{y2}): синий {b2:3d} ({b2:08b}) -> {new_b2:3d} ({new_b2:08b}) (записан {high:04b})")
 
-    img.save(out_path)
-    print(f"Сохранено: {out_path}")
+    # Сохраняем изменённое изображение
+    img.save(img_out)
+    print(f"\nИзображение: {img_out}")
+    return True
 
-def decode_nibbles(img_path):
-    """Декодирование."""
-    img = Image.open(img_path).convert('RGB')
+def decode_nibbles():
+    try:
+        img = Image.open(img_out).convert('RGB')
+    except Exception as e:
+        print(f"Ошибка открытия {img_out}: {e}")
+        return ""
+
     pixels = img.load()
+    random_pixels = get_random_pixels(img)
+
     data = bytearray()
-    # Проходим по парам координат
-    for i in range(0, len(coords), 2):
-        if i + 1 >= len(coords):
+    # Идём по парам пикселей
+    for i in range(0, len(random_pixels), 2):
+        if i + 1 >= len(random_pixels):
             break
-        x1, y1 = coords[i]
-        x2, y2 = coords[i + 1]
-        # Извлекаем младшие 4 бита синего канала из обоих пикселей
-        low = pixels[x1, y1][2] & 0x0F # младший ниббл (был записан первым)
-        high = pixels[x2, y2][2] & 0x0F # старший ниббл (был записан вторым)
-        byte = (high << 4) | low        # Восстанавливаем байт
+        x1, y1 = random_pixels[i]
+        x2, y2 = random_pixels[i+1]
+
+        # Извлекаем младшие 4 бита из синего канала
+        low = pixels[x1, y1][2] & 0x0F
+        high = pixels[x2, y2][2] & 0x0F
+
+        # Восстанавливаем байт (старший ниббл << 4 | младший ниббл)
+        byte = (high << 4) | low
         data.append(byte)
         if byte == 0:
             break
+
     return data.decode('utf-8', errors='replace').rstrip('\x00')
 
-print("1.1 Декодирование из new33.png")
-decoded_original = decode_original(img_in)
-print(decoded_original)
+if __name__ == "__main__":
+    print("1.1 Декодирование из new33.png")
+    print( decode_original(), "\n")
 
-print(f"\n1.2 Кодирование текста \"{text_for_encode}\"")
-encode_nibbles(img_in, text_for_encode, img_out)
-
-print("\nДекодирование из encoded.png")
-decoded_encoded = decode_nibbles(img_out)
-print(decoded_encoded)
+    print(f"1.2 Кодирование сообщения: \"{TEXT_TO_ENCODE}\"")
+    if encode_nibbles(TEXT_TO_ENCODE):
+        decoded = decode_nibbles()
+        print(f"\nДекодированное сообщение: {decoded}")
